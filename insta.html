@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Insta Gate Rush</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: #070b16; color: #fff; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #gameCanvas { display: block; width: 100%; height: 100%; background: radial-gradient(circle at center top, rgba(120,190,255,0.08), transparent 34%), linear-gradient(180deg, #101820 0%, #050611 70%); }
+        .hud { position: absolute; top: 14px; left: 14px; right: 14px; display: flex; justify-content: space-between; gap: 10px; pointer-events: none; z-index: 10; }
+        .panel { background: rgba(0,0,0,0.62); border: 1px solid rgba(255,255,255,0.12); border-radius: 14px; padding: 10px 14px; min-width: 92px; backdrop-filter: blur(6px); }
+        .panel .label { font-size: 11px; letter-spacing: 1.2px; color: #89b7ff; margin-bottom: 4px; text-transform: uppercase; }
+        .panel .value { font-size: 1.25rem; color: #ffffff; font-weight: 800; text-shadow: 0 0 8px rgba(0,160,255,0.4); }
+        .value.gold { color: #ffd24d; text-shadow: 0 0 10px rgba(255,210,77,0.4); }
+        .value.red { color: #ff7a7a; text-shadow: 0 0 10px rgba(255,122,122,0.4); }
+        .screen { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 15; background: rgba(3,9,22,0.92); }
+        .menu { width: min(92vw, 360px); padding: 24px 20px; border-radius: 24px; border: 1px solid rgba(255,255,255,0.14); box-shadow: 0 0 60px rgba(0, 180, 255, 0.08); backdrop-filter: blur(12px); }
+        .menu .title { font-size: 2rem; letter-spacing: 1px; margin-bottom: 10px; color: #4ad7ff; text-shadow: 0 0 18px rgba(74,215,255,0.35); }
+        .menu .subtitle { font-size: 0.94rem; color: #c8d8ff; margin-bottom: 18px; line-height: 1.5; }
+        .menu button { width: 100%; border: 2px solid #4ad7ff; border-radius: 14px; padding: 14px 0; font-size: 1.1rem; color: #d8f7ff; background: rgba(15,35,50,0.9); cursor: pointer; transition: transform 0.12s ease, background 0.12s ease; }
+        .menu button:hover { background: rgba(25,65,102,0.95); }
+        .menu button:active { transform: scale(0.98); }
+        .guide { margin-top: 16px; font-size: 0.86rem; color: #a3b9ff; line-height: 1.6; text-align: left; }
+        .guide b { color: #7de9ff; }
+        .flash { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 3rem; color: #7affd5; text-shadow: 0 0 24px rgba(122,255,213,0.6); opacity: 0; pointer-events: none; }</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<div class="hud">
+    <div class="panel"><div class="label">Score</div><div class="value gold" id="scoreValue">0</div></div>
+    <div class="panel"><div class="label">Troops</div><div class="value" id="troopValue">12</div></div>
+    <div class="panel"><div class="label">Boss HP</div><div class="value red" id="bossValue">2700</div></div>
+</div>
+<div class="flash" id="flashText"></div>
+<div class="screen" id="menuScreen">
+    <div class="menu">
+        <div class="title">Gate Rush</div>
+        <div class="subtitle">좌우 레인을 이동하며 +1 게이트, 골드 게이트, 보스까지 돌파하세요.</div>
+        <button id="startButton">Start Run</button>
+        <div class="guide"><b>Control</b>: 좌우 화살표 또는 화면 터치<br><b>Goal</b>: 병력 늘리고, 적을 막고, 보스로 돌진</div>
+    </div>
+</div>
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const scoreValue = document.getElementById('scoreValue');
+const troopValue = document.getElementById('troopValue');
+const bossValue = document.getElementById('bossValue');
+const menuScreen = document.getElementById('menuScreen');
+const flashText = document.getElementById('flashText');
+const startButton = document.getElementById('startButton');
+let W = 0, H = 0;
+let animationFrame;
+let lane = 1;
+let score = 0;
+let troops = 12;
+let bossHp = 2700;
+let distance = 0;
+let gameState = 'MENU';
+let waveTimer = 0;
+let obstacles = [];
+let bossPhase = false;
+let flashTimer = 0;
+const lanes = [0, 1, 2];
+const laneX = () => [W*0.25, W*0.5, W*0.75];
+const spawnObstacle = () => {
+    const typeChance = Math.random();
+    if (typeChance < 0.45) {
+        obstacles.push({ type: 'plus', lane: Math.floor(Math.random()*3), y: H + 60, value: 1, x: 0, color: '#1cd46f' });
+    } else if (typeChance < 0.75) {
+        obstacles.push({ type: 'gold', lane: Math.floor(Math.random()*3), y: H + 60, value: 99, x: 0, color: '#f6c73d' });
+    } else if (typeChance < 0.92) {
+        obstacles.push({ type: 'zombie', lane: Math.floor(Math.random()*3), y: H + 60, value: 3, x: 0, color: '#cc4f4f' });
+    } else {
+        obstacles.push({ type: 'mob', lane: Math.floor(Math.random()*3), y: H + 60, value: 5, x: 0, color: '#a8a8d0' });
+    }
+};
+const resize = () => {
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = W * devicePixelRatio;
+    canvas.height = H * devicePixelRatio;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+};
+const showFlash = text => {
+    flashText.textContent = text;
+    flashText.style.opacity = '1';
+    flashTimer = 40;
+};
+const resetGame = () => {
+    lane = 1;
+    score = 0;
+    troops = 12;
+    bossHp = 2700;
+    distance = 0;
+    obstacles = [];
+    waveTimer = 0;
+    bossPhase = false;
+    updateHud();
+};
+const updateHud = () => {
+    scoreValue.textContent = score;
+    troopValue.textContent = troops;
+    bossValue.textContent = bossHp;
+};
+const drawScene = () => {
+    ctx.clearRect(0,0,W,H);
+    const roadWidth = W * 0.7;
+    const roadLeft = (W - roadWidth) / 2;
+    const laneWidth = roadWidth / 3;
+    ctx.fillStyle = '#111a28';
+    ctx.fillRect(roadLeft, 0, roadWidth, H);
+    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+    ctx.lineWidth = 2;
+    for (let i=1;i<3;i++) {
+        ctx.setLineDash([12,12]);
+        ctx.beginPath();
+        ctx.moveTo(roadLeft + laneWidth*i, 0);
+        ctx.lineTo(roadLeft + laneWidth*i, H);
+        ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    for (let i=0;i<20;i++) {
+        const y = (i*70 + (distance*0.5 % 70));
+        ctx.fillStyle = 'rgba(255,255,255,0.06)';
+        ctx.fillRect(roadLeft + roadWidth*0.18, y, roadWidth*0.16, 6);
+        ctx.fillRect(roadLeft + roadWidth*0.66, y, roadWidth*0.16, 6);
+    }
+    obstacles.forEach(obs => {
+        const x = roadLeft + laneWidth*obs.lane + laneWidth/2;
+        if (obs.type === 'plus' || obs.type === 'gold') {
+            ctx.fillStyle = obs.color;
+            ctx.beginPath();
+            ctx.arc(x, obs.y, 24, 0, Math.PI*2);
+            ctx.fill();
+            ctx.fillStyle = '#111';
+            ctx.font = 'bold 18px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(obs.type === 'plus' ? '+1' : '+99', x, obs.y);
+        } else {
+            ctx.fillStyle = obs.color;
+            ctx.fillRect(x - 26, obs.y - 18, 52, 36);
+            ctx.fillStyle = '#111';
+            ctx.font = 'bold 16px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(obs.type === 'zombie' ? 'X' : '!!', x, obs.y);
+        }
+    });
+    ctx.fillStyle = '#35b8ff';
+    const playerX = roadLeft + laneWidth*lane + laneWidth/2;
+    const playerY = H*0.8;
+    for (let i=0;i<Math.min(9, troops); i++) {
+        const row = Math.floor(i/3), col = i % 3;
+        const px = playerX + (col-1)*18;
+        const py = playerY + row*16;
+        ctx.fillRect(px-10, py-14, 20, 28);
+        ctx.fillStyle = '#0ff';
+        ctx.fillRect(px-4, py-6, 8, 10);
+        ctx.fillStyle = '#35b8ff';
+    }
+    if (bossPhase) {
+        const bossY = H*0.2;
+        ctx.fillStyle = '#ff3853';
+        ctx.beginPath();
+        ctx.ellipse(W/2, bossY, 90, 48, 0, 0, Math.PI*2);
+        ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 24px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('BOSS', W/2, bossY+4);
+        ctx.fillStyle = '#ffcc00';
+        ctx.fillRect(W*0.18, bossY+64, W*0.64, 14);
+        ctx.fillStyle = '#ff3f75';
+        const hpRatio = Math.max(0, bossHp / 2700);
+        ctx.fillRect(W*0.18, bossY+64, W*0.64 * hpRatio, 14);
+    }
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 18px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('Swipe / Arrow = Move lanes', W/2, H - 26);
+};
+const updateGame = () => {
+    if (gameState !== 'PLAY') return;
+    distance += 1;
+    waveTimer += 1;
+    if (waveTimer > 48) { spawnObstacle(); waveTimer = 0; }
+    obstacles.forEach(obs => obs.y -= 4 + Math.min(6, distance / 300));
+    obstacles = obstacles.filter(obs => obs.y > -40);
+    const playerY = H*0.8;
+    obstacles.forEach((obs, idx) => {
+        if (Math.abs(obs.y - playerY) < 36 && obs.lane === lane) {
+            if (obs.type === 'plus') { troops += obs.value; score += 15; showFlash('+1 TROOP'); }
+            else if (obs.type === 'gold') { score += obs.value; showFlash('+99'); }
+            else if (obs.type === 'zombie') { troops -= obs.value; score += 8; showFlash('-3'); }
+            else if (obs.type === 'mob') { troops -= obs.value; score += 12; showFlash('-5'); }
+            obstacles.splice(idx, 1);
+        }
+    });
+    if (distance > 1400 && !bossPhase) {
+        bossPhase = true; showFlash('BOSS APPEARS!');
+    }
+    if (bossPhase && Math.random() < 0.015) {
+        bossHp -= 12;
+        score += 25;
+        showFlash('BOSS HIT');
+    }
+    if (bossPhase && bossHp <= 0) {
+        bossHp = 0;
+        gameState = 'WIN';
+        showFlash('CLEAR!');
+        setTimeout(() => { menuScreen.style.display = 'flex'; }, 800);
+    }
+    if (troops <= 0) {
+        troops = 0;
+        gameState = 'LOSE';
+        showFlash('GAME OVER');
+        setTimeout(() => { menuScreen.style.display = 'flex'; }, 800);
+    }
+    score += 1;
+    updateHud();
+};
+const tick = () => {
+    updateGame();
+    drawScene();
+    if (flashTimer > 0) {
+        flashTimer -= 1;
+        if (flashTimer < 10) flashText.style.opacity = String(flashTimer / 10);
+    }
+    animationFrame = requestAnimationFrame(tick);
+};
+const setLane = newLane => {
+    lane = Math.max(0, Math.min(2, newLane));
+};
+window.addEventListener('keydown', e => {
+    if (e.key === 'ArrowLeft') setLane(lane-1);
+    if (e.key === 'ArrowRight') setLane(lane+1);
+});
+let touchStartX = null;
+window.addEventListener('touchstart', e => { touchStartX = e.touches[0].clientX; });
+window.addEventListener('touchend', e => {
+    if (touchStartX === null) return;
+    const diff = e.changedTouches[0].clientX - touchStartX;
+    if (diff > 40) setLane(lane+1);
+    if (diff < -40) setLane(lane-1);
+    touchStartX = null;
+});
+startButton.addEventListener('click', () => {
+    resetGame();
+    gameState = 'PLAY';
+    menuScreen.style.display = 'none';
+});
+window.addEventListener('resize', resize);
+resize();
+updateHud();
+tick();
+</script>
+</body>
+</html>
